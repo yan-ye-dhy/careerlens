@@ -1,20 +1,26 @@
 # CareerLens
 
-CareerLens 当前是一个本地 Python 命令行程序。它可以读取 UTF-8 招聘 JD，清洗文本空白，也可以按本周约定的固定格式提取岗位字段并导出结构化 JSON。
+CareerLens 当前是一个本地 Python 命令行程序。它可以读取 UTF-8 招聘 JD、清洗文本、提取固定格式岗位字段，也可以批量处理一个目录中的多份 JD 并导出统计报告。
 
-这是 Week 1 与 Week 2 的工程成果，重点练习 Python 数据结构、模块、文件读写、异常处理、数据模型、JSON、自动化测试和 CLI 整合。
+这是 Week 1 至 Week 3 的工程成果，重点练习 Python 数据结构、模块、文件读写、异常处理、数据模型、JSON、批量处理、统计排序、自动化测试和 CLI 整合。
 
 ## 当前功能
 
 - 从命令行接收输入文件路径和输出文件路径。
 - 保留 Week 1 文本清洗模式，输出规范化后的文本文件。
 - 使用 `--json` 显式选择 Week 2 结构化 JSON 模式。
+- 使用 `--batch-json` 选择 Week 3 批量 JSON 报告模式。
 - 使用 `JobPosting` 数据模型表示岗位名称、技能、职责、工作方式和薪资。
+- 使用 `BatchResult` 数据模型保存成功岗位与单文件失败信息。
 - 使用确定性解析规则提取固定格式字段。
+- 批量读取目录直属的 `.txt` 文件，并保持稳定的文件顺序。
+- 单个文件失败时记录错误并继续处理其他文件。
+- 按岗位统计技能出现次数，并按次数和名称生成稳定排名。
+- 通过 `Callable` 参数支持将固定解析器替换为其他提取器。
 - 区分必填字段缺失、字段为空和字段值不受支持。
 - 使用 UTF-8 保存中文，并在需要时自动创建输出目录。
 - 输入文件或岗位内容不合法时显示清楚错误并返回非零退出码。
-- 通过 pytest 自动检查文本清洗与岗位解析规则。
+- 通过 pytest 自动检查文本清洗、岗位解析、批量处理和技能分析。
 
 ## 数据处理流程
 
@@ -37,6 +43,19 @@ JSON 导出模式：
 → JSON 文件
 ```
 
+批量 JSON 报告模式：
+
+```text
+输入目录
+→ 查找并排序 .txt 文件
+→ 逐文件读取、清洗与提取
+→ BatchResult（成功岗位 + 失败信息）
+→ 技能计数与排名
+→ Python dict
+→ json.dump()
+→ 批量 JSON 报告
+```
+
 ## 项目结构
 
 ```text
@@ -47,15 +66,20 @@ careerlens/
 │   └── processed/              # 本地生成结果，由 Git 忽略
 ├── practice/
 │   ├── week1/                  # Week 1 Python 基础练习
-│   └── week2/                  # Week 2 数据、JSON 与模型练习
+│   ├── week2/                  # Week 2 数据、JSON 与模型练习
+│   └── week3/                  # Week 3 批处理与分析练习
 ├── src/
 │   └── careerlens/
 │       ├── __init__.py         # Python 包标识
+│       ├── analysis.py         # 技能计数与排名
+│       ├── batch.py            # 批量读取、处理与失败隔离
 │       ├── cleaner.py          # 文本清洗
-│       ├── models.py           # JobPosting 数据模型
+│       ├── models.py           # JobPosting 与 BatchResult 数据模型
 │       ├── parser.py           # 固定格式岗位解析
 │       └── cli.py              # 参数、文件、异常与程序入口
 ├── tests/
+│   ├── test_analysis.py        # 技能分析测试
+│   ├── test_batch.py           # 批量处理测试
 │   ├── test_cleaner.py         # 文本清洗测试
 │   └── test_parser.py          # 岗位解析测试
 ├── README.md
@@ -115,7 +139,24 @@ cat data/processed/sample_jd.json
 python -m json.tool data/processed/sample_jd.json
 ```
 
-成功时退出码为 `0`。用法错误、输入文件不存在或岗位内容不符合解析规则时，程序显示错误并返回 `1`。
+### 输出批量 JSON 报告
+
+下面的示例会处理 `data/raw/` 直属目录中的所有 `.txt` 文件：
+
+```bash
+PYTHONPATH=src python -m careerlens.cli \
+  --batch-json \
+  data/raw \
+  data/processed/batch_report.json
+```
+
+验证报告的 JSON 语法：
+
+```bash
+python -m json.tool data/processed/batch_report.json
+```
+
+成功运行或查看 `--help` 时退出码为 `0`。文件、目录、写入或岗位解析失败时返回 `1`；命令行参数缺失或互斥模式冲突时由 `argparse` 返回 `2`。
 
 程序不会修改 `data/raw/sample_jd.txt`。只有读取、清洗、解析和模型转换全部成功后，才会创建或覆盖输出文件。
 
@@ -142,6 +183,17 @@ salary              薪资原文，字符串或 null
 
 固定保留值为 `null` 的可选字段，可以让不同岗位文件保持一致的数据结构。
 
+批量报告固定包含四部分：
+
+```text
+jobs             成功提取的岗位，按来源路径保存
+failures         失败文件及其错误信息
+skill_counts     每项技能出现于多少个岗位
+skill_ranking    按次数降序、名称升序排列的技能列表
+```
+
+同一岗位内重复出现的技能只统计一次。
+
 ## 测试方法
 
 激活虚拟环境后，从项目目录执行：
@@ -150,7 +202,7 @@ salary              薪资原文，字符串或 null
 PYTHONPATH=src python -m pytest -v
 ```
 
-当前共有 19 个测试：8 个文本清洗测试和 11 个岗位解析测试，预期结果为 `19 passed`。
+当前共有 29 个测试用例：4 个技能分析测试、6 个批量处理测试、8 个文本清洗测试和 11 个岗位解析测试，预期结果为 `29 passed`。
 
 ## 当前支持的清洗规则
 
@@ -187,8 +239,9 @@ PYTHONPATH=src python -m pytest -v
 
 ## 当前限制
 
-- 解析器只支持上文约定的固定格式，不理解任意网站或公司的招聘 JD。
+- 固定解析器只支持上文约定的格式，不理解任意网站或公司的招聘 JD；它会作为后续新提取器的基线或回退方案保留。
 - 不使用 LLM、Prompt 或语义推理补全缺失字段。
+- 批量处理目前只读取输入目录的直属 `.txt` 文件，不递归进入子目录。
 - 不使用数据库，结果只保存在本地文本或 JSON 文件中。
 - 不包含 FastAPI、Web 页面、RAG、向量检索或 Agent 工作流。
 
@@ -202,3 +255,5 @@ PYTHONPATH=src python -m pytest -v
 
 - [Week 1 学习记录](../docs/learning/week-01-learning-record.md)
 - [Week 2 学习记录](../docs/learning/week-02-learning-record.md)
+- [Week 3 学习计划](../docs/learning/week-03-plan.md)
+- [Week 3 学习记录](../docs/learning/week-03-learning-record.md)

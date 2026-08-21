@@ -8,3 +8,9 @@ class JobPosting:
     responsibilities: list[str]
     remote: bool | None
     salary: str | None
+
+
+@dataclass
+class BatchResult:
+    jobs: dict[str, JobPosting]
+    failures: dict[str, str]
